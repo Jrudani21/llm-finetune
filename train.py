@@ -57,7 +57,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="QLoRA fine-tune the stats specialist.")
     parser.add_argument("--base", default=DEFAULT_BASE)
     parser.add_argument("--out", default="lora_model")
-    parser.add_argument("--steps", type=int, default=0, help="max steps; 0 = full epochs")
+    parser.add_argument("--steps", type=int, default=-1, help="max steps; -1 (default) = full epochs, or set a positive number to limit")
     parser.add_argument("--epochs", type=float, default=1.0)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--batch", type=int, default=2)
@@ -90,19 +90,19 @@ def main() -> int:
         train_ds, eval_ds = ds, None
 
     # --- trl bug workaround (see module docstring) ---
-    cfg = SFTConfig(
+    sft_kwargs = dict(
         dataset_text_field="text",
         max_length=args.max_seq,
         output_dir=args.out + "_runs",
         per_device_train_batch_size=args.batch,
         per_device_eval_batch_size=args.batch,
         num_train_epochs=args.epochs,
-        max_steps=args.steps,
         learning_rate=args.lr,
         weight_decay=0.01,
         warmup_ratio=0.05,
         logging_steps=5,
-        eval_strategy="steps" if args.eval_frac else "no",        eval_steps=20,
+        eval_strategy="steps" if args.eval_frac else "no",
+        eval_steps=20,
         save_strategy="steps",
         save_steps=50,
         save_total_limit=2,
@@ -111,6 +111,10 @@ def main() -> int:
         bf16=True,  # Ada supports bf16; unsloth's fast-LoRA kernels need it over fp16 autocast
         remove_unused_columns=False,
     )
+    if args.steps and args.steps > 0:
+        # only set max_steps when explicitly requested; -1/0 leave epochs in control
+        sft_kwargs["max_steps"] = args.steps
+    cfg = SFTConfig(**sft_kwargs)
     # Pin the REAL tokens: SFTConfig defaults to None, and transformers'
     # TrainingArguments.to_dict() obfuscates *_token fields into "<TOKEN>"
     # placeholders (secrets protection). trl reads eos_token back from that

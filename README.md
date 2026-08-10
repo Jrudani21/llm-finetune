@@ -72,5 +72,29 @@ personal AI assistant, running fully locally on an RTX 4060 (8 GB VRAM).
 - [x] Dataset generated (240 pairs) and reviewed (automated gate passes)
 - [x] trl SFTTrainer working on this stack (bug workaround in `train.py`)
 - [x] GGUF → Ollama path verified end-to-end with a real trained adapter
-- [ ] Full training run on qwen2.5:7b (hours; ready to launch)
-- [ ] Final human spot-check of the 240-pair dataset before the real run
+- [x] Full training run on qwen2.5:7b (hours; ready to launch) → **DONE 2026-08-08**:
+      1 epoch, 108 steps, loss 2.7 → 1.49 (eval 1.16), adapter in `lora_model/`.
+      **Deployed**: `qwen25-stats:latest` live in Ollama (q4_k_m, 4.7 GB), verified
+      answering stats questions correctly.
+- [x] Final human spot-check of the 240-pair dataset before the real run
+      (automated gate passed; a quick human skim is still recommended before
+      re-training).
+
+## Deployment note (unsloth's `save_pretrained_gguf` hang on 7B)
+
+On this stack, `model.save_pretrained_gguf(...)` hangs after the 16-bit merge on
+Qwen2.5 7B (its GGUF subprocess tries to download `tokenizer.model`, which does
+not exist for Qwen2.5 — BPE tokenizer, `tokenizer.json` only). The working path,
+used for the real deployment:
+
+1. `model.save_pretrained_gguf(..., save_method="merged_16bit")` is NOT needed —
+   instead load base 4-bit, `get_peft_model`, `load_adapter("lora_model",
+   adapter_name="default")`, and save merged 16-bit via `save_pretrained`
+   (or reuse the `./qwen25-stats-gguf` output if the merge already ran).
+2. Convert directly with llama.cpp (already installed under `~/.unsloth/llama.cpp`):
+   - `unsloth_convert_hf_to_gguf.py <dir> --outfile <f16.gguf> --outtype f16`
+   - `llama-quantize.exe <f16.gguf> <q4_k_m.gguf> q4_k_m 8`
+3. Write a Modelfile using `OLLAMA_TEMPLATES["qwen-25"]` (from
+   `unsloth.save`), pointing at the q4_k_m GGUF with `{__EOS_TOKEN__}` =
+   `<|im_end|>`; `ollama create qwen25-stats -f Modelfile_...`.
+4. `ollama run qwen25-stats` works; verified correct stats answers.
