@@ -3,3 +3,9 @@ __pycache__/
 unsloth_compiled_cache/
 *.jsonl
 *.pyc
+lora_*/
+*_runs/
+*-gguf/
+*-gguf_gguf/
+Modelfile_*
+*.gguf
