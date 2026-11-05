@@ -7,6 +7,13 @@ import argparse, json, math, urllib.request
 def ask(model, q, backend, timeout=120):
     if backend == "fake":
         return "overdispersion " + q if model == "tuned" else q
+    if backend == "lmstudio":  # OpenAI-compatible; reasoning off so answers fit the token cap
+        body = json.dumps({"model": model, "messages": [{"role": "user", "content": q}],
+                           "temperature": 0, "max_tokens": 400, "reasoning_effort": "none"}).encode()
+        req = urllib.request.Request("http://127.0.0.1:1234/v1/chat/completions", body,
+                                     {"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)["choices"][0]["message"].get("content") or ""
     body = json.dumps({"model": model, "prompt": q, "stream": False,
                        "options": {"temperature": 0, "num_predict": 400}}).encode()
     req = urllib.request.Request("http://127.0.0.1:11434/api/generate", body,
@@ -32,18 +39,25 @@ def main():
     ap.add_argument("--tuned", required=True)
     ap.add_argument("--data", default="held_out.jsonl")
     ap.add_argument("--out", default="results.json")
-    ap.add_argument("--backend", choices=["ollama", "fake"], default="ollama")
+    ap.add_argument("--backend", choices=["ollama", "lmstudio", "fake"], default="ollama")
     a = ap.parse_args()
     rows = [json.loads(l) for l in open(a.data, encoding="utf-8") if l.strip()]
+    def run_model(model, name):  # one model at a time: avoids reload thrash on an 8 GB GPU
+        out = []
+        for r in rows:
+            try:
+                out.append(ask(model if a.backend != "fake" else name, r["question"], a.backend))
+            except Exception as ex:  # a failed call counts as a miss, recorded verbatim
+                out.append(f"ERROR: {ex}")
+        return out
+    ans_b, ans_t = run_model(a.base, "base"), run_model(a.tuned, "tuned")
     res, b, c = [], 0, 0
-    for r in rows:
-        ans = {m: ask(m if a.backend == "ollama" else n, r["question"], a.backend)
-               for m, n in ((a.base, "base"), (a.tuned, "tuned"))}
-        pb, pt = passes(ans[a.base], r["must_include"]), passes(ans[a.tuned], r["must_include"])
+    for r, xb, xt in zip(rows, ans_b, ans_t):
+        pb, pt = passes(xb, r["must_include"]), passes(xt, r["must_include"])
         b += pb and not pt
         c += pt and not pb
         res.append({"id": r["id"], "topic": r["topic"], "base_pass": pb, "tuned_pass": pt,
-                    "base_answer": ans[a.base], "tuned_answer": ans[a.tuned]})
+                    "base_answer": xb, "tuned_answer": xt})
     n = len(res)
     out = {"n": n, "base_acc": sum(x["base_pass"] for x in res) / n,
            "tuned_acc": sum(x["tuned_pass"] for x in res) / n,
