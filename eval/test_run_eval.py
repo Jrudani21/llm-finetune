@@ -16,3 +16,9 @@ class T(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TJudge(unittest.TestCase):
+    def test_digit_parse_and_sign_test(self):
+        import re
+        self.assertEqual(re.search(r"[1-5]", "Score: 4").group(), "4")
+        self.assertAlmostEqual(mcnemar_exact(0, 10), 0.001953125)
