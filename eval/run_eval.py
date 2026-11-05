@@ -2,7 +2,7 @@
 Usage: python run_eval.py --base qwen2.5:7b --tuned qwen25-stats
 Scoring is keyword-based: an answer passes if it contains ANY listed stem
 (case-insensitive). Coarse by design; read results.json for the raw answers."""
-import argparse, json, math, urllib.request
+import argparse, json, math, time, urllib.request
 
 def ask(model, q, backend, timeout=120):
     if backend == "fake":
@@ -21,7 +21,18 @@ def ask(model, q, backend, timeout=120):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)["response"]
 
+def ask_retry(model, q, backend, tries=4):
+    for i in range(tries):
+        try:
+            return ask(model, q, backend)
+        except Exception:
+            if i == tries - 1:
+                raise
+            time.sleep(10 * (i + 1))  # LM Studio returns transient 500s while swapping models
+
 def passes(answer, keys):
+    if answer.startswith("ERROR"):
+        return False  # a failed call is never a pass
     a = answer.lower()
     return any(k.lower() in a for k in keys)
 
@@ -46,7 +57,7 @@ def main():
         out = []
         for r in rows:
             try:
-                out.append(ask(model if a.backend != "fake" else name, r["question"], a.backend))
+                out.append(ask_retry(model if a.backend != "fake" else name, r["question"], a.backend))
             except Exception as ex:  # a failed call counts as a miss, recorded verbatim
                 out.append(f"ERROR: {ex}")
         return out
@@ -54,11 +65,15 @@ def main():
     res, b, c = [], 0, 0
     for r, xb, xt in zip(rows, ans_b, ans_t):
         pb, pt = passes(xb, r["must_include"]), passes(xt, r["must_include"])
-        b += pb and not pt
-        c += pt and not pb
+        if not (xb.startswith("ERROR") or xt.startswith("ERROR")):
+            b += pb and not pt
+            c += pt and not pb
         res.append({"id": r["id"], "topic": r["topic"], "base_pass": pb, "tuned_pass": pt,
                     "base_answer": xb, "tuned_answer": xt})
     n = len(res)
+    errs = sum(x["base_answer"].startswith("ERROR") or x["tuned_answer"].startswith("ERROR") for x in res)
+    if errs:
+        print(f"WARNING: {errs}/{n} rows had a failed call; they score as misses and are excluded from McNemar")
     out = {"n": n, "base_acc": sum(x["base_pass"] for x in res) / n,
            "tuned_acc": sum(x["tuned_pass"] for x in res) / n,
            "base_only": b, "tuned_only": c, "mcnemar_p": mcnemar_exact(b, c), "rows": res}

@@ -7,7 +7,7 @@ from run_eval import mcnemar_exact
 
 PROMPT = """You grade answers to applied-statistics questions.
 Question: {q}
-Key points a correct answer should cover (any wording): {k}
+Reference answer: {k}
 Answer to grade:
 \"\"\"{a}\"\"\"
 Score 1-5: 5 = correct and covers the key points; 3 = partly correct or vague; 1 = wrong or off-topic.
@@ -37,7 +37,7 @@ def main():
         for r in d["rows"]:
             q = qs[r["id"]]
             try:
-                r[side + "_score"] = grade(a.judge, q["question"], q["must_include"], r[side + "_answer"])
+                r[side + "_score"] = grade(a.judge, q["question"], [q.get("reference") or ", ".join(q["must_include"])], r[side + "_answer"])
             except Exception as ex:
                 r[side + "_score"] = None
                 r[side + "_judge_error"] = str(ex)
